@@ -1,0 +1,27 @@
+networks:
+  neo4j-network:
+    driver: bridge
+
+services:
+  neo4j-database:
+    image: neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+     - NEO4J_AUTH=none
+    volumes:
+      - ./neo4j/data:/data
+    networks:
+      - neo4j-network
+
+  neo4j-api:
+    build:
+      context: ./
+      dockerfile: ./src/Neo4J.Api/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - NEO4J_URL=bolt://neo4j-database:7687
+    networks:
+      - neo4j-network
