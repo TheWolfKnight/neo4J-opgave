@@ -62,22 +62,26 @@ MERGE (a)-[:KNOWS {since: $time}]->(b)
     {
     var result = await _driver
       .ExecutableQuery(@"
-MATCH p = SHROTEST 1 (p1:Person)-[:KNOWS]->(p2:Person)
-WHERE p1.name = $name1 AND p2.name = $name2
+MATCH p=shortestPath((:Person {name: $from})-[*]-(:Person {name: $to}))
 RETURN [n in nodes(p) | n.name] as people
       ")
-      .WithParameters(new {name1 = @from, name2 = @to})
-      .WithMap(record => record["people"].As<string>())
+      .WithParameters(new {@from, @to})
+      .WithMap(record => record["people"].As<IEnumerable<string>>())
       .ExecuteAsync();
 
       var path = new List<string>();
       foreach (var person in result.Result)
-        path.Add(person);
+      {
+        path.AddRange(person);
+      }
 
       _logger.LogDebug("Found shortest path \"{Path}\"", string.Join("->", path));
 
       if (path.Any())
-        return Ok(string.Join("->", path));
+      {
+        var pt = string.Join("->", path);
+        return Ok(pt);
+      }
       return NoContent();
     }
     catch (Exception e)
@@ -96,14 +100,10 @@ RETURN [n in nodes(p) | n.name] as people
         .ExecutableQuery(@"
 MATCH (p:Person {name: $oldName})
 SET p.name = $newName
-RETURN p.name
+RETURN p
         ")
-        .WithParameters(new {request.OldName, request.NewName})
-        .WithMap(record => record["name"].As<string>())
+        .WithParameters(new {oldName = request.OldName, newName = request.NewName})
         .ExecuteAsync(cancellationToken);
-
-      foreach (var newName in result.Result)
-        _logger.LogDebug("New name is: " + newName);
 
       return Ok();
     }
@@ -115,29 +115,68 @@ RETURN p.name
     }
   }
 
-  [HttpPut("/update-all-who-knows")]
+  [HttpPut("/update-when-they-know")]
   public async Task<ActionResult> UpdateKnownSinceAsync([FromBody] AddRelationRequest request, CancellationToken cancellationToken = default)
   {
     try
     {
       var result = await _driver.
         ExecutableQuery(@"
-  MATCH (:Person {name: $name})-[rel:KNOWN]->(:Person {name: $knows})
-  SET rel.since = $time
-  RETURN rel.since
+MATCH (:Person {name: $Name})-[rel:KNOWS]-(:Person {name: $Knows})
+SET rel.since = $time
         ")
-        .WithParameters(new {request.KnownSince, request.Name, request.Knows})
-        .WithMap(record => record["since"].As<DateTime>())
+        .WithParameters(new {time = request.KnownSince, request.Name, request.Knows})
         .ExecuteAsync(cancellationToken);
-
-        foreach (var since in result.Result)
-          _logger.LogDebug($"{request.Name} now knows {request.Knows} since: " + since);
 
       return Ok();
     }
     catch (Exception e)
     {
       _logger.LogError(e, "stuff in update since");
+      return Problem();
+    }
+  }
+
+  [HttpDelete("/person")]
+  public async Task<ActionResult> PersonIsNoMoreAsync([FromQuery] string name, CancellationToken cancellationToken = default)
+  {
+    try
+    {
+      var result = await _driver
+        .ExecutableQuery(@"
+MATCH (n:Person {name: $name})
+DETACH DELETE n
+        ")
+        .WithParameters(new { name })
+        .ExecuteAsync(cancellationToken);
+
+      return Ok();
+    }
+    catch (Exception e)
+    {
+      _logger.LogError(e, "stuff in kill person");
+      return Problem();
+    }
+  }
+
+  [HttpDelete("/no-longer-friends-with")]
+  public async Task<ActionResult> PersonIsNoLongerFriendsWithAsync([FromQuery] string name, string noLongerFrinedsWith, CancellationToken cancellationToken = default)
+  {
+    try
+    {
+      var result = await _driver
+        .ExecutableQuery(@"
+MATCH (:Person {name: $name})-[rel:KNOWS]->(:Person {name: $knows})
+DELETE rel
+        ")
+        .WithParameters(new { name, knows = noLongerFrinedsWith })
+        .ExecuteAsync(cancellationToken);
+
+      return Ok();
+    }
+    catch (Exception e)
+    {
+      _logger.LogError(e, "stuff in no longer friends with");
       return Problem();
     }
   }
